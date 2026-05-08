@@ -8,47 +8,71 @@ pipeline {
     }
 
     parameters {
-        string(name: 'PROJECT_PATH',
-               defaultValue: 'C:/Users/tenzin.tamang/Downloads/EmployeeManagementSystem/EmployeeManagementSystem')
 
-        choice(name: 'BUILD_MODE',
-               choices: ['BUILD_AND_RUN', 'RUN_ONLY'])
+        string(
+            name: 'PROJECT_PATH',
+            defaultValue: 'C:/Users/tenzin.tamang/Downloads/EmployeeManagementSystem/EmployeeManagementSystem',
+            description: 'Project Location'
+        )
 
-        string(name: 'APP_PORT',
-               defaultValue: '8085')
+        choice(
+            name: 'BUILD_MODE',
+            choices: ['BUILD_AND_RUN', 'RUN_ONLY'],
+            description: 'Build and run or only run'
+        )
 
-        choice(name: 'DEBUG_MODE',
-               choices: ['ENABLE', 'DISABLE'])
+        string(
+            name: 'APP_PORT',
+            defaultValue: '8085',
+            description: 'Application Port'
+        )
 
-        string(name: 'MIN_COVERAGE',
-               defaultValue: '80')
-    }
+        choice(
+            name: 'DEBUG_MODE',
+            choices: ['ENABLE', 'DISABLE'],
+            description: 'Enable or Disable Debug'
+        )
 
-    environment {
-        DB_CREDS = credentials('MYSQL_CREDS')
+        string(
+            name: 'MIN_COVERAGE',
+            defaultValue: '80',
+            description: 'Minimum Coverage Required'
+        )
     }
 
     stages {
 
         stage('Input Validation') {
+
             steps {
+
                 script {
+
+                    echo "Checking Project Path..."
+
                     if (!fileExists("${params.PROJECT_PATH}/pom.xml")) {
                         error "pom.xml not found"
                     }
+
+                    echo "Project validation successful"
                 }
             }
         }
 
         stage('Workspace Preparation') {
+
             steps {
+
                 dir("${params.PROJECT_PATH}") {
+
                     bat 'mvn clean'
+
                 }
             }
         }
 
         stage('Build') {
+
             when {
                 expression {
                     params.BUILD_MODE == 'BUILD_AND_RUN'
@@ -56,18 +80,24 @@ pipeline {
             }
 
             steps {
+
                 dir("${params.PROJECT_PATH}") {
+
                     bat 'mvn compile'
+
                 }
             }
         }
 
         stage('Run Unit Tests & Coverage') {
+
             steps {
 
                 dir("${params.PROJECT_PATH}") {
 
-                    bat 'mvn test'
+                    bat 'mvn test jacoco:report'
+
+                    junit 'target/surefire-reports/*.xml'
 
                     script {
 
@@ -78,8 +108,11 @@ pipeline {
 
                         def lastLine = lines[-1].split(',')
 
-                        def instructionMissed = lastLine[3].toInteger()
-                        def instructionCovered = lastLine[4].toInteger()
+                        def instructionMissed =
+                        lastLine[3].toInteger()
+
+                        def instructionCovered =
+                        lastLine[4].toInteger()
 
                         def coverage =
                         (instructionCovered * 100) /
@@ -88,7 +121,13 @@ pipeline {
                         echo "Coverage: ${coverage}%"
 
                         if (coverage < params.MIN_COVERAGE.toInteger()) {
+
                             error "Coverage below threshold"
+
+                        } else {
+
+                            echo "Coverage requirement satisfied"
+
                         }
                     }
                 }
@@ -96,8 +135,26 @@ pipeline {
         }
 
         stage('Secure Configuration') {
+
             steps {
-                echo "Using DB Username: ${DB_CREDS_USR}"
+
+                withCredentials([
+
+                    string(
+                        credentialsId: 'DB_USERNAME',
+                        variable: 'SECURE_DB_USER'
+                    ),
+
+                    string(
+                        credentialsId: 'DB_PASSWORD',
+                        variable: 'SECURE_DB_PASS'
+                    )
+
+                ]) {
+
+                    echo "Database credentials loaded securely"
+
+                }
             }
         }
 
@@ -111,16 +168,36 @@ pipeline {
 
             steps {
 
-                dir("${params.PROJECT_PATH}") {
+                withCredentials([
 
-                    bat """
-                    start java -jar target\\demo-0.0.1-SNAPSHOT.jar --server.port=${params.APP_PORT}
-                    """
+                    string(
+                        credentialsId: 'DB_USERNAME',
+                        variable: 'SECURE_DB_USER'
+                    ),
+
+                    string(
+                        credentialsId: 'DB_PASSWORD',
+                        variable: 'SECURE_DB_PASS'
+                    )
+
+                ]) {
+
+                    dir("${params.PROJECT_PATH}") {
+
+                        bat """
+                        start java -jar target\\demo-0.0.1-SNAPSHOT.jar ^
+                        --server.port=${params.APP_PORT} ^
+                        --spring.datasource.username=%SECURE_DB_USER% ^
+                        --spring.datasource.password=%SECURE_DB_PASS%
+                        """
+
+                    }
                 }
             }
         }
 
         stage('Health Check') {
+
             steps {
 
                 bat """
@@ -130,10 +207,16 @@ pipeline {
         }
 
         stage('Summary') {
+
             steps {
+
                 echo "Build Success"
+
                 echo "Tests Passed"
+
                 echo "Coverage Verified"
+
+                echo "Application Running On Port ${params.APP_PORT}"
             }
         }
     }
@@ -145,6 +228,19 @@ pipeline {
             cleanWs()
 
             echo "Pipeline Finished"
+
+        }
+
+        success {
+
+            echo "Pipeline Executed Successfully"
+
+        }
+
+        failure {
+
+            echo "Pipeline Failed"
+
         }
     }
 }
