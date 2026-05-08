@@ -1,0 +1,150 @@
+pipeline {
+
+    agent any
+
+    tools {
+        jdk 'JDK21'
+        maven 'Maven3'
+    }
+
+    parameters {
+        string(name: 'PROJECT_PATH',
+               defaultValue: 'C:/Users/tenzin.tamang/Downloads/EmployeeManagementSystem/EmployeeManagementSystem')
+
+        choice(name: 'BUILD_MODE',
+               choices: ['BUILD_AND_RUN', 'RUN_ONLY'])
+
+        string(name: 'APP_PORT',
+               defaultValue: '8085')
+
+        choice(name: 'DEBUG_MODE',
+               choices: ['ENABLE', 'DISABLE'])
+
+        string(name: 'MIN_COVERAGE',
+               defaultValue: '80')
+    }
+
+    environment {
+        DB_CREDS = credentials('MYSQL_CREDS')
+    }
+
+    stages {
+
+        stage('Input Validation') {
+            steps {
+                script {
+                    if (!fileExists("${params.PROJECT_PATH}/pom.xml")) {
+                        error "pom.xml not found"
+                    }
+                }
+            }
+        }
+
+        stage('Workspace Preparation') {
+            steps {
+                dir("${params.PROJECT_PATH}") {
+                    bat 'mvn clean'
+                }
+            }
+        }
+
+        stage('Build') {
+            when {
+                expression {
+                    params.BUILD_MODE == 'BUILD_AND_RUN'
+                }
+            }
+
+            steps {
+                dir("${params.PROJECT_PATH}") {
+                    bat 'mvn compile'
+                }
+            }
+        }
+
+        stage('Run Unit Tests & Coverage') {
+            steps {
+
+                dir("${params.PROJECT_PATH}") {
+
+                    bat 'mvn test'
+
+                    script {
+
+                        def report =
+                        readFile('target/site/jacoco/jacoco.csv')
+
+                        def lines = report.split('\n')
+
+                        def lastLine = lines[-1].split(',')
+
+                        def instructionMissed = lastLine[3].toInteger()
+                        def instructionCovered = lastLine[4].toInteger()
+
+                        def coverage =
+                        (instructionCovered * 100) /
+                        (instructionCovered + instructionMissed)
+
+                        echo "Coverage: ${coverage}%"
+
+                        if (coverage < params.MIN_COVERAGE.toInteger()) {
+                            error "Coverage below threshold"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Secure Configuration') {
+            steps {
+                echo "Using DB Username: ${DB_CREDS_USR}"
+            }
+        }
+
+        stage('Application Execution') {
+
+            when {
+                expression {
+                    params.BUILD_MODE == 'BUILD_AND_RUN'
+                }
+            }
+
+            steps {
+
+                dir("${params.PROJECT_PATH}") {
+
+                    bat """
+                    start java -jar target\\demo-0.0.1-SNAPSHOT.jar --server.port=${params.APP_PORT}
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+
+                bat """
+                curl http://localhost:${params.APP_PORT}/actuator/health
+                """
+            }
+        }
+
+        stage('Summary') {
+            steps {
+                echo "Build Success"
+                echo "Tests Passed"
+                echo "Coverage Verified"
+            }
+        }
+    }
+
+    post {
+
+        always {
+
+            cleanWs()
+
+            echo "Pipeline Finished"
+        }
+    }
+}
