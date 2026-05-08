@@ -18,7 +18,7 @@ pipeline {
         choice(
             name: 'BUILD_MODE',
             choices: ['BUILD_AND_RUN', 'RUN_ONLY'],
-            description: 'Build and run or only run'
+            description: 'Build and Run OR Only Run'
         )
 
         string(
@@ -42,6 +42,10 @@ pipeline {
 
     stages {
 
+        // ======================================================
+        // STAGE 1 : INPUT VALIDATION
+        // ======================================================
+
         stage('Input Validation') {
 
             steps {
@@ -51,13 +55,19 @@ pipeline {
                     echo "Checking Project Path..."
 
                     if (!fileExists("${params.PROJECT_PATH}/pom.xml")) {
+
                         error "pom.xml not found"
+
                     }
 
                     echo "Project validation successful"
                 }
             }
         }
+
+        // ======================================================
+        // STAGE 2 : WORKSPACE PREPARATION
+        // ======================================================
 
         stage('Workspace Preparation') {
 
@@ -71,11 +81,18 @@ pipeline {
             }
         }
 
+        // ======================================================
+        // STAGE 3 : BUILD
+        // ======================================================
+
         stage('Build') {
 
             when {
+
                 expression {
+
                     params.BUILD_MODE == 'BUILD_AND_RUN'
+
                 }
             }
 
@@ -83,11 +100,15 @@ pipeline {
 
                 dir("${params.PROJECT_PATH}") {
 
-                    bat 'mvn compile'
+                    bat 'mvn clean package -DskipTests'
 
                 }
             }
         }
+
+        // ======================================================
+        // STAGE 4 : UNIT TESTS + COVERAGE
+        // ======================================================
 
         stage('Run Unit Tests & Coverage') {
 
@@ -97,16 +118,19 @@ pipeline {
 
                     bat 'mvn test jacoco:report'
 
+                    // Publish JUnit Results
                     junit 'target/surefire-reports/*.xml'
 
                     script {
 
+                        // Read JaCoCo CSV report
                         def report =
                         readFile('target/site/jacoco/jacoco.csv')
 
-                        def lines = report.split('\n')
+                        def lines = report.trim().split('\n')
 
-                        def lastLine = lines[-1].split(',')
+                        def lastLine =
+                        lines[lines.size() - 1].split(',')
 
                         def instructionMissed =
                         lastLine[3].toInteger()
@@ -118,7 +142,12 @@ pipeline {
                         (instructionCovered * 100) /
                         (instructionCovered + instructionMissed)
 
-                        echo "Coverage: ${coverage}%"
+                        coverage = coverage.toInteger()
+
+                        echo "===================================="
+                        echo "Coverage : ${coverage}%"
+                        echo "Minimum Required : ${params.MIN_COVERAGE}%"
+                        echo "===================================="
 
                         if (coverage < params.MIN_COVERAGE.toInteger()) {
 
@@ -133,6 +162,10 @@ pipeline {
                 }
             }
         }
+
+        // ======================================================
+        // STAGE 5 : SECURE CONFIGURATION
+        // ======================================================
 
         stage('Secure Configuration') {
 
@@ -158,11 +191,18 @@ pipeline {
             }
         }
 
+        // ======================================================
+        // STAGE 6 : APPLICATION EXECUTION
+        // ======================================================
+
         stage('Application Execution') {
 
             when {
+
                 expression {
+
                     params.BUILD_MODE == 'BUILD_AND_RUN'
+
                 }
             }
 
@@ -193,10 +233,26 @@ pipeline {
 
                     }
                 }
+
+                // Wait for application startup
+                sleep 15
             }
         }
 
+        // ======================================================
+        // STAGE 7 : HEALTH CHECK
+        // ======================================================
+
         stage('Health Check') {
+
+            when {
+
+                expression {
+
+                    params.BUILD_MODE == 'BUILD_AND_RUN'
+
+                }
+            }
 
             steps {
 
@@ -206,26 +262,36 @@ pipeline {
             }
         }
 
+        // ======================================================
+        // STAGE 8 : SUMMARY
+        // ======================================================
+
         stage('Summary') {
 
             steps {
 
-                echo "Build Success"
+                echo "===================================="
+                echo "BUILD SUCCESS"
+                echo "TESTS PASSED"
+                echo "COVERAGE VERIFIED"
+                echo "JACOCO REPORT GENERATED"
+                echo "APPLICATION RUNNING ON PORT ${params.APP_PORT}"
+                echo "===================================="
 
-                echo "Tests Passed"
+                echo "Coverage Report Location :"
 
-                echo "Coverage Verified"
-
-                echo "Application Running On Port ${params.APP_PORT}"
+                echo "${params.PROJECT_PATH}/target/site/jacoco/index.html"
             }
         }
     }
 
+    // ======================================================
+    // POST ACTIONS
+    // ======================================================
+
     post {
 
         always {
-
-            cleanWs()
 
             echo "Pipeline Finished"
 
